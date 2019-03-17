@@ -1,10 +1,13 @@
 package io.ktor.server.netty.cio
 
-import io.ktor.server.netty.*
-import io.ktor.util.internal.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.*
-import java.util.concurrent.atomic.*
+import io.ktor.server.netty.NettyApplicationCall
+import io.ktor.util.internal.LockFreeLinkedListNode
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
+import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater
 
 internal class NettyRequestQueue(internal val readLimit: Int, internal val runningLimit: Int) {
     init {
@@ -12,15 +15,21 @@ internal class NettyRequestQueue(internal val readLimit: Int, internal val runni
         require(runningLimit > 0) { "executeLimit should be positive: $runningLimit" }
     }
 
-    private val incomingQueue = Channel<CallElement>(Channel.UNLIMITED)
+    private val incomingQueue = Channel<CallElement>(8)
 
     val elements: ReceiveChannel<CallElement> = incomingQueue
 
     fun schedule(call: NettyApplicationCall) {
         val element = CallElement(call)
         try {
-            incomingQueue.offer(element)
+            val scheduled = incomingQueue.offer(element)
+//            LoggerFactory.getLogger("NettyRequestQueue").error("hi")
+            if (!scheduled) {
+                LoggerFactory.getLogger("NettyRequestQueue").error("Request Queue is full")
+                throw RuntimeException("Request Queue is full")
+            }
         } catch (t: Throwable) {
+            LoggerFactory.getLogger("NettyRequestQueue").error("Exception: $t")
             element.tryDispose()
         }
     }
@@ -64,7 +73,8 @@ internal class NettyRequestQueue(internal val readLimit: Int, internal val runni
         }
 
         companion object {
-            private val Scheduled = AtomicIntegerFieldUpdater.newUpdater(CallElement::class.java, CallElement::scheduled.name)!!
+            private val Scheduled =
+                AtomicIntegerFieldUpdater.newUpdater(CallElement::class.java, CallElement::scheduled.name)!!
         }
     }
 }
