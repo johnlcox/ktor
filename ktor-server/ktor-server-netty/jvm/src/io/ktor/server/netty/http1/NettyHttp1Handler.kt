@@ -11,6 +11,7 @@ import io.netty.util.concurrent.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.io.*
 import java.io.*
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.*
 
 @ChannelHandler.Sharable
@@ -19,7 +20,9 @@ internal class NettyHttp1Handler(private val enginePipeline: EnginePipeline,
                                  private val callEventGroup: EventExecutorGroup,
                                  private val engineContext: CoroutineContext,
                                  private val userContext: CoroutineContext,
-                                 private val requestQueue: NettyRequestQueue) : ChannelInboundHandlerAdapter(), CoroutineScope {
+                                 private val requestQueue: NettyRequestQueue,
+                                 private val allCount: AtomicInteger
+) : ChannelInboundHandlerAdapter(), CoroutineScope {
     private val handlerJob = CompletableDeferred<Nothing>()
 
     private var configured = false
@@ -71,7 +74,7 @@ internal class NettyHttp1Handler(private val enginePipeline: EnginePipeline,
         if (!configured) {
             configured = true
             val requestBodyHandler = RequestBodyHandler(ctx, requestQueue)
-            val responseWriter = NettyResponsePipeline(ctx, WriterEncapsulation.Http1, requestQueue, coroutineContext)
+            val responseWriter = NettyResponsePipeline(ctx, WriterEncapsulation.Http1, requestQueue, coroutineContext, allCount)
 
             ctx.pipeline().apply {
                 addLast(requestBodyHandler)

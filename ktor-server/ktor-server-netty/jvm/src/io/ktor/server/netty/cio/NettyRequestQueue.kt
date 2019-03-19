@@ -4,9 +4,11 @@ import io.ktor.server.netty.NettyApplicationCall
 import io.ktor.util.internal.LockFreeLinkedListNode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ObsoleteCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater
 
 internal class NettyRequestQueue(internal val readLimit: Int, internal val runningLimit: Int) {
@@ -14,8 +16,48 @@ internal class NettyRequestQueue(internal val readLimit: Int, internal val runni
         require(readLimit > 0) { "readLimit should be positive: $readLimit" }
         require(runningLimit > 0) { "executeLimit should be positive: $runningLimit" }
     }
+    private val logger = LoggerFactory.getLogger("NettyRequestQueue")
 
-    private val incomingQueue = Channel<CallElement>(8)
+    private val incomingQueue = MyQueue(Channel<CallElement>(8))
+
+    class MyQueue(private val delegate: Channel<CallElement>) : Channel<CallElement> by delegate {
+        private val logger = LoggerFactory.getLogger("NettyRequestQueue")
+        private val count = AtomicInteger(0)
+
+        override fun offer(element: CallElement): Boolean {
+            val accepted = delegate.offer(element)
+            if (accepted) {count.incrementAndGet()}
+            if (!accepted) logger.error ("Offer Not Accepted")
+
+            logger.error("""Queued Call Count: ${count.get()}""")
+            return accepted
+        }
+
+        override fun poll(): CallElement? {
+            val polledValue = delegate.poll()
+
+            if (polledValue != null) {
+                count.decrementAndGet()
+            }
+
+//            logger.error("""Queued Call Count: ${count.get()}""")
+
+            return polledValue;
+        }
+
+        @ObsoleteCoroutinesApi
+        override suspend fun receiveOrNull(): CallElement? {
+            val receivedValue = delegate.receiveOrNull()
+
+            if (receivedValue != null) {
+                count.decrementAndGet()
+            }
+
+//            logger.error("""Queued Call Count: ${count.get()}""")
+
+            return receivedValue
+        }
+    }
 
     val elements: ReceiveChannel<CallElement> = incomingQueue
 
@@ -25,11 +67,11 @@ internal class NettyRequestQueue(internal val readLimit: Int, internal val runni
             val scheduled = incomingQueue.offer(element)
 //            LoggerFactory.getLogger("NettyRequestQueue").error("hi")
             if (!scheduled) {
-                LoggerFactory.getLogger("NettyRequestQueue").error("Request Queue is full")
+                logger.error("Request Queue is full")
                 throw RuntimeException("Request Queue is full")
             }
         } catch (t: Throwable) {
-            LoggerFactory.getLogger("NettyRequestQueue").error("Exception: $t")
+            logger.error("Exception: $t")
             element.tryDispose()
         }
     }

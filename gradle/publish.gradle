@@ -91,8 +91,8 @@ publishing {
 
         if (publication != null) {
             if (target.platformType.name == 'jvm') {
-                publication.artifact javadocJar
-                publication.artifact dokkaJar
+//                publication.artifact javadocJar
+//                publication.artifact dokkaJar
             } else {
                 publication.artifact stubJavadoc
                 publication.artifact stubDokka

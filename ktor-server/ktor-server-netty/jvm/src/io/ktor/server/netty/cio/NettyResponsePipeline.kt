@@ -13,8 +13,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.*
 import kotlinx.coroutines.io.*
 import kotlinx.io.core.*
+import org.slf4j.LoggerFactory
 import java.io.*
 import java.util.*
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.*
 
 private const val UNFLUSHED_LIMIT = 65536
@@ -22,7 +24,8 @@ private const val UNFLUSHED_LIMIT = 65536
 internal class NettyResponsePipeline(private val dst: ChannelHandlerContext,
                                      initialEncapsulation: WriterEncapsulation,
                                      private val requestQueue: NettyRequestQueue,
-                                     override val coroutineContext: CoroutineContext
+                                     override val coroutineContext: CoroutineContext,
+                                     private val allCount: AtomicInteger
 ) : CoroutineScope {
     private val readyQueueSize = requestQueue.readLimit
     private val runningQueueSize = requestQueue.runningLimit
@@ -30,6 +33,7 @@ internal class NettyResponsePipeline(private val dst: ChannelHandlerContext,
     private val incoming: ReceiveChannel<NettyRequestQueue.CallElement> = requestQueue.elements
     private val ready = ArrayDeque<NettyRequestQueue.CallElement>(readyQueueSize)
     private val running = ArrayDeque<NettyRequestQueue.CallElement>(runningQueueSize)
+    private val processing = ArrayDeque<NettyApplicationCall>(100)
 
     private val responses = launch(
         dst.executor().asCoroutineDispatcher() + ResponsePipelineCoroutineName,
@@ -90,6 +94,7 @@ internal class NettyResponsePipeline(private val dst: ChannelHandlerContext,
             val e = incoming.receiveOrNull()
 
             if (e != null && e.ensureRunning()) {
+                logger?.error("Adding to running")
                 running.addLast(e)
                 tryFill()
             }
@@ -108,6 +113,7 @@ internal class NettyResponsePipeline(private val dst: ChannelHandlerContext,
         while (ready.isNotEmpty() && running.size < runningQueueSize) {
             val e = ready.removeFirst()
             if (e.ensureRunning()) {
+                logger?.error("Adding to running")
                 running.addLast(e)
             } else {
                 break
@@ -115,7 +121,17 @@ internal class NettyResponsePipeline(private val dst: ChannelHandlerContext,
         }
     }
 
-    private fun isNotFull(): Boolean = ready.size < readyQueueSize || running.size < runningQueueSize
+    private val logger = LoggerFactory.getLogger("NettyResponsePipeline")
+    private fun isNotFull(): Boolean {
+        val result = ready.size < readyQueueSize || running.size < runningQueueSize
+
+        try {
+            logger?.error("""allCount = ${allCount.get()}""")
+        } finally {
+
+            return result
+        }
+    }
 
     private fun hasNextResponseMessage(): Boolean {
         tryFill()
@@ -125,6 +141,8 @@ internal class NettyResponsePipeline(private val dst: ChannelHandlerContext,
     @Suppress("NOTHING_TO_INLINE")
     private suspend inline fun processElement(element: NettyRequestQueue.CallElement) {
         val call = element.call
+        processing.addLast(call)
+        allCount.incrementAndGet()
 
         try {
             processCall(call)
@@ -182,6 +200,9 @@ internal class NettyResponsePipeline(private val dst: ChannelHandlerContext,
             lastFuture.suspendWriteAwait()
             requestQueue.cancel()
         }
+
+        processing.remove(call)
+        allCount.decrementAndGet()
     }
 
     @Suppress("NOTHING_TO_INLINE")

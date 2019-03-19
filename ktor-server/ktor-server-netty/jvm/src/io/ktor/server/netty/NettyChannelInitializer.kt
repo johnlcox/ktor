@@ -11,9 +11,11 @@ import io.netty.handler.codec.http2.*
 import io.netty.handler.ssl.*
 import io.netty.handler.timeout.*
 import io.netty.util.concurrent.*
+import org.slf4j.LoggerFactory
 import java.nio.channels.*
 import java.security.*
 import java.security.cert.*
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.*
 
 /**
@@ -33,6 +35,7 @@ class NettyChannelInitializer(
     private val httpServerCodec: () -> HttpServerCodec
 ) : ChannelInitializer<SocketChannel>() {
     private var sslContext: SslContext? = null
+    private val allCount = AtomicInteger(0)
 
     init {
         if (connector is EngineSSLConnectorConfig) {
@@ -88,10 +91,11 @@ class NettyChannelInitializer(
     private fun configurePipeline(pipeline: ChannelPipeline, protocol: String) {
         when (protocol) {
             ApplicationProtocolNames.HTTP_2 -> {
-                val handler = NettyHttp2Handler(enginePipeline, environment.application, callEventGroup, userContext)
+                val handler = NettyHttp2Handler(enginePipeline, environment.application, callEventGroup, userContext, allCount)
                 pipeline.addLast(Http2MultiplexCodecBuilder.forServer(handler).build())
             }
             ApplicationProtocolNames.HTTP_1_1 -> {
+                LoggerFactory.getLogger("NettyChannelInitializer").error("configuring pipeline")
                 val requestQueue = NettyRequestQueue(requestQueueLimit, runningLimit)
                 val handler = NettyHttp1Handler(
                     enginePipeline,
@@ -99,7 +103,8 @@ class NettyChannelInitializer(
                     callEventGroup,
                     engineContext,
                     userContext,
-                    requestQueue
+                    requestQueue,
+                    allCount
                 )
 
                 with(pipeline) {
@@ -107,6 +112,28 @@ class NettyChannelInitializer(
                     addLast("codec", httpServerCodec())
                     addLast("continue", HttpServerExpectContinueHandler())
                     addLast("timeout", WriteTimeoutHandler(responseWriteTimeout))
+                    addLast("idleTimeout", IdleStateHandler(10, 10, 10))
+                    addLast("myIdleHandler", object : ChannelDuplexHandler() {
+                        override fun userEventTriggered(ctx: ChannelHandlerContext?, evt: Any?) {
+                            if (evt is IdleStateEvent) {
+                                if (evt == IdleStateEvent.ALL_IDLE_STATE_EVENT) {
+                                    ctx?.close()
+                                }
+                            }
+                        }
+                    })
+//                             {@code @Override}
+//                             public void userEventTriggered({@link ChannelHandlerContext} ctx, {@link Object} evt) throws {@link Exception} {
+//                                 if (evt instanceof {@link IdleStateEvent}) {
+//                                     {@link IdleStateEvent} e = ({@link IdleStateEvent}) evt;
+//                                     if (e.state() == {@link IdleState}.READER_IDLE) {
+//                                             ctx.close();
+//                                         } else if (e.state() == {@link IdleState}.WRITER_IDLE) {
+//                                             ctx.writeAndFlush(new PingMessage());
+//                                         }
+//                                 }
+//                             }
+//                         })
                     addLast("http1", handler)
 
                 }

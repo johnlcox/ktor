@@ -81,7 +81,7 @@ allprojects {
         }
     }
 
-    apply from: rootProject.file('gradle/dokka.gradle')
+//    apply from: rootProject.file('gradle/dokka.gradle')
 
     if (!rootProject.ext.skipPublish.contains(project.name)) {
         apply from: rootProject.file('gradle/publish.gradle')
@@ -120,12 +120,12 @@ afterEvaluate {
         kotlinOptions.freeCompilerArgs += ["-XXLanguage:+InlineClasses"]
     }
 
-    task dokkaWebsite(type: dokka.getClass()) {
-        outputFormat = 'kotlin-website'
-        outputDirectory = "${rootProject.projectDir}/apidoc"
-
-        kotlinTasks { allCompileKotlinTasks }
-
-        reportUndocumented = false
-    }
+//    task dokkaWebsite(type: dokka.getClass()) {
+//        outputFormat = 'kotlin-website'
+//        outputDirectory = "${rootProject.projectDir}/apidoc"
+//
+//        kotlinTasks { allCompileKotlinTasks }
+//
+//        reportUndocumented = false
+//    }
 }

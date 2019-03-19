@@ -4,6 +4,7 @@ import io.ktor.application.*
 import io.ktor.server.engine.*
 import kotlinx.coroutines.*
 import org.eclipse.jetty.server.*
+import org.eclipse.jetty.util.thread.QueuedThreadPool
 import java.util.concurrent.*
 
 /**
@@ -31,7 +32,7 @@ open class JettyApplicationEngineBase(
     /**
      * Jetty server instance being configuring and starting
      */
-    protected val server: Server = Server().apply {
+    protected val server: Server = Server(QueuedThreadPool(200, 8, 10000, ArrayBlockingQueue(8))).apply {
         configuration.configureServer(this)
         initializeServer(environment)
     }
